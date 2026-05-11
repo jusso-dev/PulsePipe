@@ -1,0 +1,138 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  developer
+  viewer
+}
+
+enum EventStatus {
+  received
+  processing
+  delivered
+  partially_failed
+  failed
+}
+
+enum DeliveryStatus {
+  queued
+  delivering
+  succeeded
+  failed
+  dead_letter
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+}
+
+model Workspace {
+  id           String        @id @default(cuid())
+  name         String
+  slug         String        @unique
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  memberships  Membership[]
+  apiKeys      ApiKey[]
+  events       Event[]
+  destinations Destination[]
+}
+
+model Membership {
+  id          String        @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        WorkspaceRole @default(viewer)
+  createdAt   DateTime      @default(now())
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model ApiKey {
+  id          String     @id @default(cuid())
+  workspaceId String
+  name        String
+  keyPrefix   String
+  keyHash     String     @unique
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  events      Event[]
+
+  @@index([workspaceId])
+  @@index([keyPrefix])
+}
+
+model Event {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  apiKeyId           String?
+  name               String
+  externalUserId     String?
+  timestamp          DateTime
+  properties         Json
+  receivedAt         DateTime          @default(now())
+  status             EventStatus       @default(received)
+  processingAttempts Int               @default(0)
+  lastError          String?
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  apiKey             ApiKey?           @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  deliveryAttempts   DeliveryAttempt[]
+
+  @@index([workspaceId, receivedAt])
+  @@index([workspaceId, name])
+  @@index([workspaceId, status])
+  @@index([workspaceId, externalUserId])
+}
+
+model Destination {
+  id               String            @id @default(cuid())
+  workspaceId      String
+  name             String
+  url              String
+  signingSecret    String
+  enabled          Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deliveryAttempts DeliveryAttempt[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, enabled])
+}
+
+model DeliveryAttempt {
+  id            String         @id @default(cuid())
+  eventId       String
+  destinationId String
+  status        DeliveryStatus @default(queued)
+  responseCode  Int?
+  responseBody  String?
+  error         String?
+  attemptNumber Int            @default(1)
+  durationMs    Int?
+  createdAt     DateTime       @default(now())
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  destination   Destination    @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, destinationId])
+  @@index([destinationId, status])
+  @@index([status, createdAt])
+}
